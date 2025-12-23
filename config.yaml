@@ -1,0 +1,47 @@
+# ============================================================================
+# Central Bank Sentiment Analysis - Configuration
+# ============================================================================
+
+# Data Selection
+# Change these dates to analyze different time periods
+date_range:
+  start: "2022-01-01"  # Format: YYYY-MM-DD
+  end: "2023-12-31"    # Format: YYYY-MM-DD
+
+# Model Settings
+# You can change to gpt-4o-mini, gpt-4-turbo, etc.
+# See: https://platform.openai.com/docs/models
+model:
+  name: "gpt-4o-2024-08-06"
+  temperature: 0.3
+  response_format: "json_object"
+
+# Cost Estimates (Update based on OpenAI pricing page)
+# https://openai.com/api/pricing/
+pricing:
+  input_per_1m_tokens: 2.50    # USD per 1M input tokens
+  output_per_1m_tokens: 10.00  # USD per 1M output tokens
+  batch_discount: 0.50         # 50% discount for batch API
+
+# Chunking Settings
+# DO NOT increase max_speeches_per_chunk above 25
+# OpenAI has 90k enqueued token limit - larger chunks will fail
+chunking:
+  max_speeches_per_chunk: 20
+
+# Visualization Settings
+charts:
+  create_bars: true          # Bar charts (speech dates only)
+  create_areas: true         # Area plots (continuous time series)
+  create_calendars: true     # Calendar heatmaps
+
+# Directory Structure
+# These will be auto-created if they don't exist
+directories:
+  raw_data: "data/raw"
+  processed_data: "data/processed"
+  batch_files: "outputs/batch_files"
+  batch_results: "outputs/batch_results"
+  indices: "outputs/indices"
+  charts: "outputs/charts"
+  reports: "outputs/reports"

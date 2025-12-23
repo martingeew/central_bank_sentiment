@@ -1,0 +1,42 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Data files
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*.csv
+
+# Output files
+outputs/batch_files/*
+!outputs/batch_files/.gitkeep
+outputs/batch_results/*
+!outputs/batch_results/.gitkeep
+outputs/indices/*
+!outputs/indices/.gitkeep
+outputs/charts/*
+!outputs/charts/.gitkeep
+outputs/reports/*
+!outputs/reports/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
