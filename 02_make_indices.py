@@ -34,13 +34,15 @@ def main():
     utils.ensure_directories(config)
 
     # Find sampled speeches file
-    date_range = config['date_range']
-    start_year = date_range['start'][:4]
-    end_year = date_range['end'][:4]
-    speeches_file = f"{config['directories']['processed_data']}/sample_{start_year}_{end_year}.csv"
+    date_range = config["date_range"]
+    start_year = date_range["start"][:4]
+    end_year = date_range["end"][:4]
+    speeches_file = (
+        f"{config['directories']['processed_data']}/sample_{start_year}_{end_year}.csv"
+    )
 
     print(f"\nLoading speeches from: {speeches_file}")
-    speeches_df = pd.read_csv(speeches_file, parse_dates=['date'])
+    speeches_df = pd.read_csv(speeches_file, parse_dates=["date"])
     print(f"Total speeches: {len(speeches_df)}")
 
     # Initialize batch processor
@@ -52,8 +54,10 @@ def main():
 
     # Estimate cost
     total_speeches = len(speeches_df)
-    avg_speech_length = speeches_df['content'].str.len().mean()
-    estimated_input_tokens = total_speeches * (utils.estimate_tokens(str(avg_speech_length)) + 1000)  # +1000 for prompt
+    avg_speech_length = speeches_df["text"].str.len().mean()
+    estimated_input_tokens = total_speeches * (
+        utils.estimate_tokens(str(avg_speech_length)) + 1000
+    )  # +1000 for prompt
     estimated_output_tokens = total_speeches * 500  # ~500 tokens per response
 
     cost = utils.calculate_cost(estimated_input_tokens, estimated_output_tokens, config)
@@ -64,13 +68,15 @@ def main():
 
     # Ask user confirmation
     proceed = input("\nProceed with batch submission? (y/n): ")
-    if proceed.lower() != 'y':
+    if proceed.lower() != "y":
         print("Aborted")
         return
 
     # Step 2b: Submit batches
     utils.print_section_header("SUBMIT BATCHES")
-    submit_only = input("\nSubmit without waiting for completion? (y/n): ").lower() == 'y'
+    submit_only = (
+        input("\nSubmit without waiting for completion? (y/n): ").lower() == "y"
+    )
 
     batch_info = processor.process_all_chunks(batch_files, submit_only=submit_only)
 
@@ -97,7 +103,9 @@ def main():
     validator.print_validation_report(validation_results)
 
     # Save validation report
-    utils.save_json(validation_results, f"{config['directories']['reports']}/validation_report.json")
+    utils.save_json(
+        validation_results, f"{config['directories']['reports']}/validation_report.json"
+    )
 
     # Step 2e: Build daily indices
     utils.print_section_header("BUILD DAILY INDICES")
