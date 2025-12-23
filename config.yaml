@@ -5,8 +5,8 @@
 # Data Selection
 # Change these dates to analyze different time periods
 date_range:
-  start: "2022-01-01"  # Format: YYYY-MM-DD
-  end: "2023-12-31"    # Format: YYYY-MM-DD
+  start: "2021-01-01"  # Format: YYYY-MM-DD
+  end: "2025-12-31"    # Format: YYYY-MM-DD
 
 # Model Settings
 # You can change to gpt-4o-mini, gpt-4-turbo, etc.
