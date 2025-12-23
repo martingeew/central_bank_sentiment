@@ -23,11 +23,10 @@ pricing:
   output_per_1m_tokens: 10.00  # USD per 1M output tokens
   batch_discount: 0.50         # 50% discount for batch API
 
-# Chunking Settings
-# DO NOT increase max_speeches_per_chunk above 25
-# OpenAI has 90k enqueued token limit - larger chunks will fail
+# Token-based chunking to handle variable speech lengths
+# OpenAI has 90k enqueued token limit - we use 75k for safety buffer
 chunking:
-  max_speeches_per_chunk: 20
+  max_tokens_per_chunk: 75000  # Target max tokens per chunk (stay under 90k limit)
 
 # Visualization Settings
 charts:
