@@ -28,20 +28,14 @@ class BatchProcessor:
             config: Configuration dictionary
         """
         self.config = config
-        self.api_key = config["api_keys"]["openai"]
+        self.api_key = config['api_keys']['openai']
         self.client = OpenAI(api_key=self.api_key)
 
-        self.batch_files_dir = Path(config["directories"]["batch_files"])
-        self.batch_results_dir = Path(config["directories"]["batch_results"])
+        self.batch_files_dir = Path(config['directories']['batch_files'])
+        self.batch_results_dir = Path(config['directories']['batch_results'])
 
-    def create_batch_request(
-        self,
-        speech_id: str,
-        speech_text: str,
-        speaker: str,
-        institution: str,
-        date: str,
-    ) -> Dict[str, Any]:
+    def create_batch_request(self, speech_id: str, speech_text: str,
+                             speaker: str, institution: str, date: str) -> Dict[str, Any]:
         """
         Create single batch API request.
 
@@ -62,72 +56,112 @@ class BatchProcessor:
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": self.config["model"]["name"],
+                "model": self.config['model']['name'],
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are an expert in central bank communication analysis.",
+                        "content": "You are an expert in central bank communication analysis."
                     },
-                    {"role": "user", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
                 ],
-                "response_format": {"type": self.config["model"]["response_format"]},
-                "temperature": self.config["model"]["temperature"],
-            },
+                "response_format": {"type": self.config['model']['response_format']},
+                "temperature": self.config['model']['temperature']
+            }
         }
 
         return request
 
-    def create_chunked_batch_files(self, speeches_df: pd.DataFrame) -> List[Path]:
+    def create_chunked_batch_files(self, speeches_df: pd.DataFrame) -> tuple[List[Path], int]:
         """
-        Create batch files with automatic chunking to stay under token limit.
+        Create batch files with automatic chunking based on token limits.
+
+        Uses token estimation to ensure each chunk stays under the token limit.
+        Handles variable speech lengths by dynamically grouping speeches.
 
         Args:
             speeches_df: DataFrame with speeches
 
         Returns:
-            List of batch file paths
+            Tuple of (batch file paths, total estimated input tokens)
         """
-        max_per_chunk = self.config["chunking"]["max_speeches_per_chunk"]
+        max_tokens_per_chunk = self.config['chunking']['max_tokens_per_chunk']
         total_speeches = len(speeches_df)
-        num_chunks = (total_speeches + max_per_chunk - 1) // max_per_chunk
 
-        print(
-            f"\nCreating {num_chunks} batch chunks ({max_per_chunk} speeches per chunk)"
-        )
+        print(f"\nCreating batch chunks with token-based splitting...")
         print(f"Total speeches: {total_speeches}")
+        print(f"Max tokens per chunk: {max_tokens_per_chunk:,}")
 
-        batch_files = []
+        # Build all requests first and estimate tokens
+        all_requests = []
+        print("\nEstimating tokens for each request...")
 
-        for chunk_idx in range(num_chunks):
-            start_idx = chunk_idx * max_per_chunk
-            end_idx = min((chunk_idx + 1) * max_per_chunk, total_speeches)
-            chunk_speeches = speeches_df.iloc[start_idx:end_idx]
-
-            # Create JSONL file for this chunk
-            chunk_file = self.batch_files_dir / f"chunk{chunk_idx+1:02d}_input.jsonl"
-            requests = []
-
-            for idx, row in chunk_speeches.iterrows():
-                request = self.create_batch_request(
-                    speech_id=row["speech_id"],
-                    speech_text=row["text"],
-                    speaker=row["author"],
-                    institution=row["country"],
-                    date=str(row["date"].date()),
-                )
-                requests.append(request)
-
-            # Write JSONL file
-            with open(chunk_file, "w", encoding="utf-8") as f:
-                for request in requests:
-                    f.write(json.dumps(request) + "\n")
-
-            print(
-                f"  Created chunk {chunk_idx+1}/{num_chunks}: {chunk_file.name} ({len(chunk_speeches)} speeches)"
+        for idx, row in speeches_df.iterrows():
+            request = self.create_batch_request(
+                speech_id=row['speech_id'],
+                speech_text=row['text'],
+                speaker=row['author'],
+                institution=row['country'],
+                date=str(row['date'].date())
             )
+
+            # Estimate tokens for this request
+            request_str = json.dumps(request)
+            request_tokens = utils.estimate_tokens(request_str)
+
+            all_requests.append({
+                'request': request,
+                'tokens': request_tokens
+            })
+
+        # Split into chunks based on token limits
+        chunks = []
+        current_chunk = []
+        current_tokens = 0
+
+        for req_info in all_requests:
+            request_tokens = req_info['tokens']
+
+            # If adding this request would exceed limit, start new chunk
+            if current_tokens + request_tokens > max_tokens_per_chunk and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = [req_info]
+                current_tokens = request_tokens
+            else:
+                current_chunk.append(req_info)
+                current_tokens += request_tokens
+
+        # Add final chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        print(f"\nSplit into {len(chunks)} chunks:")
+
+        # Write chunks to files
+        batch_files = []
+        total_input_tokens = 0
+
+        for chunk_idx, chunk in enumerate(chunks, 1):
+            chunk_file = self.batch_files_dir / f"chunk{chunk_idx:02d}_input.jsonl"
+
+            # Calculate chunk statistics
+            chunk_tokens = sum(req['tokens'] for req in chunk)
+            chunk_speeches = len(chunk)
+            total_input_tokens += chunk_tokens
+
+            # Write chunk to JSONL file
+            with open(chunk_file, 'w', encoding='utf-8') as f:
+                for req_info in chunk:
+                    f.write(json.dumps(req_info['request']) + '\n')
+
+            print(f"  Chunk {chunk_idx:2d}: {chunk_speeches:3d} speeches, ~{chunk_tokens:,} tokens")
             batch_files.append(chunk_file)
 
-        return batch_files
+        print(f"\nTotal estimated input tokens: {total_input_tokens:,}")
+
+        return batch_files, total_input_tokens
 
     def submit_batch(self, batch_file: Path) -> str:
         """
@@ -142,8 +176,11 @@ class BatchProcessor:
         print(f"\nSubmitting batch: {batch_file.name}")
 
         # Upload file
-        with open(batch_file, "rb") as f:
-            file_response = self.client.files.create(file=f, purpose="batch")
+        with open(batch_file, 'rb') as f:
+            file_response = self.client.files.create(
+                file=f,
+                purpose='batch'
+            )
 
         file_id = file_response.id
         print(f"  Uploaded file ID: {file_id}")
@@ -152,7 +189,7 @@ class BatchProcessor:
         batch_response = self.client.batches.create(
             input_file_id=file_id,
             endpoint="/v1/chat/completions",
-            completion_window="24h",
+            completion_window="24h"
         )
 
         batch_id = batch_response.id
@@ -178,10 +215,10 @@ class BatchProcessor:
             batch_status = self.client.batches.retrieve(batch_id)
             status = batch_status.status
 
-            if status == "completed":
+            if status == 'completed':
                 print(f"  Batch completed successfully")
                 return status
-            elif status in ["failed", "expired", "cancelled"]:
+            elif status in ['failed', 'expired', 'cancelled']:
                 print(f"  Batch {status}")
                 return status
             else:
@@ -213,7 +250,7 @@ class BatchProcessor:
         content = file_response.read()
 
         # Save to file
-        with open(output_file, "wb") as f:
+        with open(output_file, 'wb') as f:
             f.write(content)
 
         print(f"  Saved to: {output_file}")
@@ -233,49 +270,33 @@ class BatchProcessor:
 
         results = []
 
-        with open(results_file, "r", encoding="utf-8") as f:
+        with open(results_file, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
                     response = json.loads(line)
-                    custom_id = response["custom_id"]
+                    custom_id = response['custom_id']
 
                     # Extract JSON from response
-                    content = response["response"]["body"]["choices"][0]["message"][
-                        "content"
-                    ]
+                    content = response['response']['body']['choices'][0]['message']['content']
                     sentiment_data = json.loads(content)
 
                     # Flatten into row
                     row = {
-                        "speech_id": custom_id,
-                        "hawkish_dovish_score": sentiment_data["hawkish_dovish_score"],
-                        "uncertainty": sentiment_data["uncertainty"],
-                        "forward_guidance_strength": sentiment_data[
-                            "forward_guidance_strength"
-                        ],
-                        "topic_inflation": sentiment_data["topics"]["inflation"],
-                        "topic_growth": sentiment_data["topics"]["growth"],
-                        "topic_financial_stability": sentiment_data["topics"][
-                            "financial_stability"
-                        ],
-                        "topic_labor_market": sentiment_data["topics"]["labor_market"],
-                        "topic_international": sentiment_data["topics"][
-                            "international"
-                        ],
-                        "market_impact_stocks": sentiment_data["market_impact"][
-                            "stocks"
-                        ],
-                        "market_impact_bonds": sentiment_data["market_impact"]["bonds"],
-                        "market_impact_currency": sentiment_data["market_impact"][
-                            "currency"
-                        ],
-                        "market_impact_reasoning": sentiment_data["market_impact"].get(
-                            "reasoning", ""
-                        ),
-                        "key_sentences": "|".join(
-                            sentiment_data.get("key_sentences", [])
-                        ),
-                        "summary": sentiment_data.get("summary", ""),
+                        'speech_id': custom_id,
+                        'hawkish_dovish_score': sentiment_data['hawkish_dovish_score'],
+                        'uncertainty': sentiment_data['uncertainty'],
+                        'forward_guidance_strength': sentiment_data['forward_guidance_strength'],
+                        'topic_inflation': sentiment_data['topics']['inflation'],
+                        'topic_growth': sentiment_data['topics']['growth'],
+                        'topic_financial_stability': sentiment_data['topics']['financial_stability'],
+                        'topic_labor_market': sentiment_data['topics']['labor_market'],
+                        'topic_international': sentiment_data['topics']['international'],
+                        'market_impact_stocks': sentiment_data['market_impact']['stocks'],
+                        'market_impact_bonds': sentiment_data['market_impact']['bonds'],
+                        'market_impact_currency': sentiment_data['market_impact']['currency'],
+                        'market_impact_reasoning': sentiment_data['market_impact'].get('reasoning', ''),
+                        'key_sentences': '|'.join(sentiment_data.get('key_sentences', [])),
+                        'summary': sentiment_data.get('summary', '')
                     }
 
                     results.append(row)
@@ -288,9 +309,8 @@ class BatchProcessor:
 
         return df
 
-    def process_all_chunks(
-        self, batch_files: List[Path], submit_only: bool = False
-    ) -> Dict[str, Any]:
+    def process_all_chunks(self, batch_files: List[Path],
+                           submit_only: bool = False) -> Dict[str, Any]:
         """
         Process all batch chunks sequentially.
 
@@ -310,20 +330,18 @@ class BatchProcessor:
 
             # Submit batch
             batch_id = self.submit_batch(batch_file)
-            batch_info[batch_file.name] = {"batch_id": batch_id, "status": "submitted"}
+            batch_info[batch_file.name] = {'batch_id': batch_id, 'status': 'submitted'}
 
             if not submit_only:
                 # Monitor until completion
                 status = self.monitor_batch(batch_id)
-                batch_info[batch_file.name]["status"] = status
+                batch_info[batch_file.name]['status'] = status
 
-                if status == "completed":
+                if status == 'completed':
                     # Download results
-                    output_file = self.batch_results_dir / batch_file.name.replace(
-                        "_input.jsonl", "_results.jsonl"
-                    )
+                    output_file = self.batch_results_dir / batch_file.name.replace('_input.jsonl', '_results.jsonl')
                     self.download_results(batch_id, output_file)
-                    batch_info[batch_file.name]["output_file"] = str(output_file)
+                    batch_info[batch_file.name]['output_file'] = str(output_file)
 
         return batch_info
 
@@ -359,7 +377,7 @@ class BatchProcessor:
         print(f"\nTotal speeches with results: {len(combined)}")
 
         # Merge with original speeches to add metadata
-        merged = speeches_df.merge(combined, on="speech_id", how="inner")
+        merged = speeches_df.merge(combined, on='speech_id', how='inner')
 
         print(f"Merged with speech metadata: {len(merged)} speeches")
 
