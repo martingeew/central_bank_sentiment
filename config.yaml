@@ -12,14 +12,14 @@ date_range:
 # You can change to gpt-4o-mini, gpt-4-turbo, etc.
 # See: https://platform.openai.com/docs/models
 model:
-  name: "gpt-4o-2024-08-06"
-  temperature: 0.3
+  name: "gpt-5.1"
+  temperature: 0.0
   response_format: "json_object"
 
 # Cost Estimates (Update based on OpenAI pricing page)
 # https://openai.com/api/pricing/
 pricing:
-  input_per_1m_tokens: 2.50    # USD per 1M input tokens
+  input_per_1m_tokens: 1.25    # USD per 1M input tokens
   output_per_1m_tokens: 10.00  # USD per 1M output tokens
   batch_discount: 0.50         # 50% discount for batch API
 
