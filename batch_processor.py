@@ -10,6 +10,7 @@ import time
 import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, List
+from datetime import datetime
 from openai import OpenAI
 from tqdm import tqdm
 import utils
@@ -20,12 +21,13 @@ class BatchProcessor:
     Manages OpenAI Batch API operations with automatic chunking.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], batch_info_file: Path = None):
         """
         Initialize batch processor.
 
         Args:
             config: Configuration dictionary
+            batch_info_file: Optional path to batch_info.json for incremental saves
         """
         self.config = config
         self.api_key = config['api_keys']['openai']
@@ -33,6 +35,12 @@ class BatchProcessor:
 
         self.batch_files_dir = Path(config['directories']['batch_files'])
         self.batch_results_dir = Path(config['directories']['batch_results'])
+        self.batch_info_file = batch_info_file
+
+    def _save_batch_info(self, batch_info: Dict[str, Any]):
+        """Save batch info to file incrementally."""
+        if self.batch_info_file:
+            utils.save_json(batch_info, self.batch_info_file)
 
     def create_batch_request(self, speech_id: str, speech_text: str,
                              speaker: str, institution: str, date: str) -> Dict[str, Any]:
@@ -198,22 +206,30 @@ class BatchProcessor:
 
         return batch_id
 
-    def monitor_batch(self, batch_id: str, check_interval: int = 60) -> str:
+    def monitor_batch(self, batch_id: str, check_interval: int = 60,
+                      on_status_change=None) -> str:
         """
-        Monitor batch job until completion.
+        Monitor batch job until completion with optional status callback.
 
         Args:
             batch_id: Batch job ID
             check_interval: Seconds between status checks
+            on_status_change: Optional callback function(status) called on status change
 
         Returns:
-            Status (completed, failed, etc.)
+            Final status (completed, failed, etc.)
         """
         print(f"\nMonitoring batch: {batch_id}")
+        last_status = None
 
         while True:
             batch_status = self.client.batches.retrieve(batch_id)
             status = batch_status.status
+
+            # Call callback if status changed
+            if on_status_change and status != last_status:
+                on_status_change(status)
+                last_status = status
 
             if status == 'completed':
                 print(f"  Batch completed successfully")
@@ -312,36 +328,113 @@ class BatchProcessor:
     def process_all_chunks(self, batch_files: List[Path],
                            submit_only: bool = False) -> Dict[str, Any]:
         """
-        Process all batch chunks sequentially.
+        Process all batch chunks with incremental saves and enhanced metadata.
 
         Args:
             batch_files: List of batch file paths
             submit_only: If True, only submit without waiting
 
         Returns:
-            Dictionary mapping chunk files to batch IDs
+            Dictionary mapping chunk files to batch info
         """
-        batch_info = {}
+        # Load existing or create new
+        if self.batch_info_file and self.batch_info_file.exists():
+            batch_info = utils.load_json(self.batch_info_file)
+            print(f"\nLoaded existing batch_info with {len(batch_info)} entries")
+        else:
+            batch_info = {}
+
+        # Create initial file with metadata
+        if self.batch_info_file:
+            # Calculate total requests
+            total_requests = sum(
+                sum(1 for _ in open(bf, 'r', encoding='utf-8'))
+                for bf in batch_files
+            )
+
+            batch_info['_metadata'] = {
+                'total_chunks': len(batch_files),
+                'total_speeches': total_requests,
+                'started_at': datetime.now().isoformat(),
+                'status': 'submitting'
+            }
+            self._save_batch_info(batch_info)
+            print(f"Created batch_info file: {self.batch_info_file}")
 
         for i, batch_file in enumerate(batch_files, 1):
             print(f"\n{'='*70}")
             print(f"Processing chunk {i}/{len(batch_files)}")
             print(f"{'='*70}")
 
-            # Submit batch
-            batch_id = self.submit_batch(batch_file)
-            batch_info[batch_file.name] = {'batch_id': batch_id, 'status': 'submitted'}
+            # Skip if already submitted and completed/in_progress
+            if batch_file.name in batch_info:
+                existing_status = batch_info[batch_file.name].get('status')
+                if existing_status in ['completed', 'in_progress']:
+                    print(f"  Skipping {batch_file.name} (already {existing_status})")
+                    continue
 
-            if not submit_only:
-                # Monitor until completion
-                status = self.monitor_batch(batch_id)
-                batch_info[batch_file.name]['status'] = status
+            try:
+                # Submit batch
+                batch_id = self.submit_batch(batch_file)
 
-                if status == 'completed':
-                    # Download results
-                    output_file = self.batch_results_dir / batch_file.name.replace('_input.jsonl', '_results.jsonl')
-                    self.download_results(batch_id, output_file)
-                    batch_info[batch_file.name]['output_file'] = str(output_file)
+                # Get batch details for metadata
+                batch_response = self.client.batches.retrieve(batch_id)
+
+                # Count requests in chunk file
+                with open(batch_file, 'r', encoding='utf-8') as f:
+                    num_requests = sum(1 for _ in f)
+
+                # Save comprehensive metadata
+                batch_info[batch_file.name] = {
+                    'chunk_number': i,
+                    'batch_id': batch_id,
+                    'file_id': batch_response.input_file_id,
+                    'num_requests': num_requests,
+                    'status': 'submitted',
+                    'submitted_at': datetime.now().isoformat()
+                }
+
+                # SAVE IMMEDIATELY
+                self._save_batch_info(batch_info)
+                print(f"  ✓ Saved batch info ({num_requests} requests)")
+
+                if not submit_only:
+                    # Create callback to save on status changes
+                    def update_status(new_status):
+                        batch_info[batch_file.name]['status'] = new_status
+                        batch_info[batch_file.name]['updated_at'] = datetime.now().isoformat()
+                        self._save_batch_info(batch_info)
+                        print(f"  ✓ Status updated: {new_status}")
+
+                    # Monitor with callback
+                    status = self.monitor_batch(batch_id, on_status_change=update_status)
+
+                    batch_info[batch_file.name]['status'] = status
+                    batch_info[batch_file.name]['completed_at'] = datetime.now().isoformat()
+                    self._save_batch_info(batch_info)
+
+                    if status == 'completed':
+                        # Download results
+                        output_file = self.batch_results_dir / batch_file.name.replace('_input.jsonl', '_results.jsonl')
+                        self.download_results(batch_id, output_file)
+                        batch_info[batch_file.name]['output_file'] = str(output_file)
+                        self._save_batch_info(batch_info)
+                        print(f"  ✓ Downloaded results")
+
+            except Exception as e:
+                print(f"  ✗ Error: {e}")
+                batch_info[batch_file.name] = {
+                    'status': 'error',
+                    'error': str(e),
+                    'failed_at': datetime.now().isoformat()
+                }
+                self._save_batch_info(batch_info)
+
+        # Update final metadata
+        if self.batch_info_file:
+            batch_info['_metadata']['completed_at'] = datetime.now().isoformat()
+            batch_info['_metadata']['status'] = 'completed'
+            self._save_batch_info(batch_info)
 
         return batch_info
 
