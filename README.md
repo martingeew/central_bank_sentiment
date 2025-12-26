@@ -73,11 +73,18 @@ Edit `config.yaml` to change:
 python 01_load_data_input.py
 
 # Step 2: Process batches and build indices (takes 30 min - 4 hours)
-python 02_make_indices.py
+python 02_make_indices.py           # Submit all chunks and wait for completion
+python 02_make_indices.py --chunk 5 # Submit only chunk 5 (for testing/retry)
+python 02_make_indices.py --resume  # Resume from existing batches (check status, download completed, resubmit failed)
 
 # Step 3: Create visualizations (takes 1-2 minutes)
 python 03_visualize_indices.py
 ```
+
+**Step 2 options explained:**
+- **Default** (no arguments): Submits all chunks. You'll be asked if you want to wait for completion or submit and check later.
+- **`--chunk N`**: Submit only a specific chunk number. Useful for resubmitting individual failed chunks.
+- **`--resume`**: Check status of existing batches, download completed results, and optionally resubmit any failed batches.
 
 ### 5. View Results
 
@@ -142,8 +149,10 @@ Error you'll get without chunking:
 
 ```yaml
 chunking:
-  max_speeches_per_chunk: 20  # Don't increase above 25!
+  max_tokens_per_chunk: 75000  # Stay under OpenAI's 90k limit
 ```
+
+The script uses **token-based chunking** (not count-based) to reliably stay under the 90,000 token limit. Each chunk's size is estimated based on actual token count rather than number of speeches.
 
 ## Understanding the Outputs
 
@@ -260,6 +269,28 @@ cat .env  # On Windows: type .env
 # Then later, run step 2 again to download results
 python 02_make_indices.py
 ```
+
+### Issue: `insufficient_quota` error
+
+**Error message:**
+```json
+"status_code": 429,
+"request_id": "14991783263bcb60ffd802bfeea34bf2",
+"body": {
+  "error": {
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.",
+    "type": "insufficient_quota",
+    "param": null,
+    "code": "insufficient_quota"
+  }
+}
+```
+
+**Solution**: Your OpenAI account credits should be topped up appropriately according to the cost estimates shown when you run step 2.
+
+1. Check your current balance: https://platform.openai.com/account/billing
+2. Add credits based on the estimated cost displayed
+3. If the batch was interrupted, use `python 02_make_indices.py --resume` to continue
 
 ### Issue: Validation rate below 95%
 
