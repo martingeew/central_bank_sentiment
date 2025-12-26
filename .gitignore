@@ -13,10 +13,10 @@ venv/
 env/
 ENV/
 
-# Data files (commented out to include data files in git)
-# data/raw/*
-# !data/raw/.gitkeep
-# data/processed/*.csv
+# Data files
+data/raw/*
+!data/raw/.gitkeep
+# data/processed/*.csv (include processed files in git)
 
 # Output files
 outputs/batch_files/*
