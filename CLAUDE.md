@@ -27,15 +27,22 @@ pip install -r requirements.txt
 
 ### Running the Pipeline
 ```bash
-# Step 1: Load and filter speeches by date range
+# Step 1: Load and filter speeches by date range (takes 2-5 minutes)
 python 01_load_data_input.py
 
-# Step 2: Process batches and build indices (requires OpenAI API key)
-python 02_make_indices.py
+# Step 2: Process batches and build indices (takes 30 min - 4 hours)
+python 02_make_indices.py           # Submit all chunks and wait for completion
+python 02_make_indices.py --chunk 5 # Submit only chunk 5 (for testing/retry)
+python 02_make_indices.py --resume  # Resume from existing batches (check status, download completed, resubmit failed)
 
-# Step 3: Create visualizations
+# Step 3: Create visualizations (takes 1-2 minutes)
 python 03_visualize_indices.py
 ```
+
+**Step 2 options explained:**
+- **Default** (no arguments): Submits all chunks. You'll be asked if you want to wait for completion or submit and check later.
+- **`--chunk N`**: Submit only a specific chunk number. Useful for resubmitting individual failed chunks.
+- **`--resume`**: Check status of existing batches, download completed results, and optionally resubmit any failed batches.
 
 ### Configuration
 All settings are in `config.yaml`:
@@ -67,9 +74,10 @@ Raw Data (HuggingFace)
 ### Core Modules
 
 **data_loader.py** - Hugging Face dataset integration
-- Downloads/caches `istat-ai/ECB-FED-speeches` dataset
+- Downloads/caches `istat-ai/ECB-FED-speeches` dataset (covers 1996-2025, ~2-3 GB)
 - Filters by date range from config
 - Stores local cache in `data/raw/ecb_fed_speeches.parquet`
+- First download takes time; subsequent runs use cached version
 
 **batch_processor.py** - OpenAI Batch API handler
 - **Chunking logic**: Splits speeches into chunks based on token estimates (not fixed count)
@@ -123,6 +131,13 @@ Raw Data (HuggingFace)
 4. Download results → chunk*_results.jsonl in batch_results/
 5. Parse and combine → sentiment_results_*.csv
 
+**Batch Info Tracking** (outputs/reports/batch_info.json):
+- Tracks all submitted batches with metadata: batch_id, status, num_requests, timestamps
+- Updated incrementally during submission and status checks
+- Used by `--resume` to identify which batches need attention
+- Default submission skips chunks with status "completed" or "in_progress"
+- Resume mode queries OpenAI dynamically for current status AND loads batch_info.json
+
 ### Token Chunking Strategy
 
 **Why chunking is needed**: OpenAI Batch API has 90,000 enqueued token limit per batch.
@@ -157,6 +172,25 @@ To add a new sentiment dimension:
 4. Add aggregation in `index_builder.py:aggregate_daily_scores()`
 5. Add visualization in `visualizer.py` (choose appropriate colormap in `get_colormap_settings()`)
 
+### Understanding the Output Metrics
+
+**Policy metrics:**
+- `hawkish_dovish_score` (-100 to +100): Tightening stance (positive = hawkish)
+- `uncertainty` (0-100): How uncertain about economic outlook
+- `forward_guidance_strength` (0-100): How explicit about future policy
+
+**Topic emphasis** (0-100 each):
+- `topic_inflation` - Focus on inflation concerns
+- `topic_growth` - Focus on economic growth
+- `topic_financial_stability` - Focus on financial risks
+- `topic_labor_market` - Focus on employment
+- `topic_international` - Focus on international issues
+
+**Market impact diffusion indices** (0-100):
+- `stocks_diffusion_index` - Stock market prediction (100=all rise, 0=all fall, 50=mixed)
+- `bonds_diffusion_index` - Bond yields prediction
+- `currency_diffusion_index` - Currency prediction
+
 ### Adjusting Date Range
 Edit `config.yaml:date_range` and re-run all 3 scripts. Cost scales linearly (~$7 per 2 years for gpt-4o).
 
@@ -189,6 +223,99 @@ central_bank_sentiment/
     └── reports/             # Validation + batch metadata
 ```
 
+## Cost Estimation
+
+For the 2022-2023 sample (311 speeches):
+```
+Estimated cost with gpt-4o-2024-08-06:
+- Input: ~5M tokens × $2.50/1M = $12.50
+- Output: ~150K tokens × $10.00/1M = $1.50
+- Subtotal: $14.00
+- Batch discount (50%): $7.00
+- Total: ~$7.00
+```
+
+For different date ranges, costs scale roughly linearly:
+- 1 year of speeches: ~$3.50
+- 5 years of speeches: ~$17.50
+- 10 years of speeches: ~$35.00
+
+**Cost-saving tips:**
+1. Use `gpt-4o-mini` (about 90% cheaper)
+2. Start with shorter date ranges for testing
+3. Always use Batch API (automatic 50% discount)
+
+## Common Issues and Troubleshooting
+
+### Issue: `OPENAI_API_KEY not found`
+
+**Solution**: Make sure you created `.env` file (not `.env.example`) and added your actual API key.
+```bash
+# Check if file exists
+ls .env  # Should show .env, not .env.example
+
+# Check file contents (your key should be there)
+cat .env  # On Windows: type .env
+```
+
+### Issue: `Enqueued token limit reached`
+
+**Solution**: This is why we use chunking! If you still get this error, you're trying to process too much at once.
+- Check `config.yaml` → `chunking.max_tokens_per_chunk`
+- Make sure it's 75,000 or less (default)
+- If running multiple batch jobs, wait for previous ones to complete
+
+### Issue: `HF_TOKEN not found` or `401 Unauthorized`
+
+**Solution**:
+1. Go to https://huggingface.co/settings/tokens
+2. Create a token with "Read" access
+3. Add it to your `.env` file
+4. Make sure there are no extra spaces or quotes
+
+### Issue: `insufficient_quota` error
+
+**Error message:**
+```json
+"status_code": 429,
+"error": {
+  "message": "You exceeded your current quota...",
+  "type": "insufficient_quota",
+  "code": "insufficient_quota"
+}
+```
+
+**Solution**: Your OpenAI account credits should be topped up according to cost estimates.
+1. Check balance: https://platform.openai.com/account/billing
+2. Add credits based on estimated cost displayed
+3. If batch was interrupted, use `python 02_make_indices.py --resume` to continue
+
+### Issue: Batch processing takes longer than expected
+
+**Solution**: OpenAI processes batches within 24 hours, but often completes in 30 minutes to 4 hours. If you don't want to wait:
+```bash
+# In step 2, when asked:
+"Submit without waiting for completion? (y/n):"
+# Answer: y
+
+# Then later, run step 2 with --resume to download results
+python 02_make_indices.py --resume
+```
+
+### Issue: Validation rate below 95%
+
+**Solution**: Check `outputs/reports/validation_report.json` to see what errors occurred. Common issues:
+- Model returned incorrect format (try different model)
+- Network errors during batch processing (re-run step 2)
+- Invalid market impact values (check if model follows "rise/fall/neutral" constraint)
+
+### Issue: Charts not created
+
+**Solution**:
+1. Check that step 2 completed successfully
+2. Verify `outputs/indices/*.csv` files exist
+3. For calendar heatmaps, ensure `dayplot` is installed: `pip install dayplot`
+
 ## Important Notes
 
 **Token Limit Errors**: If you see "Enqueued token limit reached", reduce `chunking.max_tokens_per_chunk` in config.yaml. The chunking algorithm groups speeches dynamically based on token estimates.
@@ -202,4 +329,19 @@ central_bank_sentiment/
 
 **Diffusion Index Formula**: For market impact, we calculate `(pct_rise + 0.5 * pct_neutral) * 100`. This gives 100=all rise, 50=neutral/mixed, 0=all fall.
 
-**Batch API Timing**: OpenAI processes batches within 24 hours, but typically completes in 30min-4 hours. Use `submit_only=True` option in step 2 to submit and exit, then re-run later to download results.
+**Batch API Timing**: OpenAI processes batches within 24 hours, but typically completes in 30min-4 hours. When prompted, you can submit without waiting and use `--resume` later to check status and download results.
+
+**Batch ID Hierarchy**: Understanding the different IDs in the batch system:
+- `batch_id` (e.g., "batch_abc123"): ID of entire batch job on OpenAI
+- `batch_req_xxx`: Individual request ID within the batch (in output JSONL "id" field)
+- `custom_id` (e.g., "speech_0"): Your identifier that matches between input and output JSONL
+
+**Resume vs Default Submission**:
+- `--resume`: Queries OpenAI for existing batch statuses, downloads completed results, prompts to resubmit failed batches
+- Default (no args): Automatically skips chunks with status "completed" or "in_progress", resubmits failed/missing chunks
+- Use `--resume` to check status without resubmitting, or default mode to automatically handle failures
+
+**File Suffixing for Multiple Runs**: When processing different date ranges, rename previous outputs with suffixes (e.g., `_2021_2025`) to prevent overwriting:
+- All chunk JSONL files in outputs/batch_files/ and outputs/batch_results/
+- batch_info.json and validation_report.json in outputs/reports/
+- All CSV files in outputs/indices/
