@@ -23,8 +23,8 @@ outputs/batch_files/*
 !outputs/batch_files/.gitkeep
 outputs/batch_results/*
 !outputs/batch_results/.gitkeep
-outputs/indices/*
-!outputs/indices/.gitkeep
+# outputs/indices/* (include indices in git)
+# !outputs/indices/.gitkeep
 # outputs/charts/* (include charts in git)
 # !outputs/charts/.gitkeep
 outputs/reports/*
