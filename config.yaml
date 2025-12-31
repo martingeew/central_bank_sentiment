@@ -26,7 +26,7 @@ pricing:
 # Token-based chunking to handle variable speech lengths
 # OpenAI has 90k enqueued token limit - we use 75k for safety buffer
 chunking:
-  max_tokens_per_chunk: 75000  # Target max tokens per chunk (stay under 90k limit)
+  max_tokens_per_chunk: 900000  # Target max tokens per chunk (stay under 90k limit)
 
 # Visualization Settings
 charts:
