@@ -2,6 +2,36 @@
 
 Analyze Federal Reserve and ECB speeches using OpenAI's Batch API to extract sentiment, policy stance, and market impact predictions.
 
+## Key Results
+
+### Federal Reserve — Policy Metrics Over Time
+![Fed Policy Metrics Area](outputs/charts/fed_policy_metrics_area.png)
+
+### ECB — Policy Metrics Over Time
+![ECB Policy Metrics Area](outputs/charts/ecb_policy_metrics_area.png)
+
+### Federal Reserve — Topic Emphasis Over Time
+![Fed Topic Indices Area](outputs/charts/fed_topic_indices_area.png)
+
+### ECB — Topic Emphasis Over Time
+![ECB Topic Indices Area](outputs/charts/ecb_topic_indices_area.png)
+
+### Federal Reserve — Market Impact Per Speech
+![Fed Market Impact Bars](outputs/charts/fed_market_impact_bars.png)
+
+### ECB — Market Impact Per Speech
+![ECB Market Impact Bars](outputs/charts/ecb_market_impact_bars.png)
+
+### Calendar Heatmaps
+<table>
+<tr>
+<td><img src="outputs/charts/fed_policy_metrics_calendar.png" alt="Fed Policy Calendar"/></td>
+<td><img src="outputs/charts/ecb_policy_metrics_calendar.png" alt="ECB Policy Calendar"/></td>
+</tr>
+</table>
+
+---
+
 ## What This Does
 
 - **Extracts 5 sentiment dimensions** from central bank speeches: hawkish/dovish score, topic emphasis, uncertainty, forward guidance, and market impact
